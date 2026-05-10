@@ -1,0 +1,106 @@
+# .github/workflows/deploy.yml
+# ============================================================================
+# CI/CD PIPELINE: build a Docker image and deploy it to an EC2 server.
+#
+# A "workflow" is a YAML file in .github/workflows/. GitHub watches this folder
+# and runs the file on the events you list under `on:` below.
+#
+# The big picture for students:
+#   GitHub repo  --(push to main)-->  GitHub Actions runner (Ubuntu VM in the cloud)
+#       runner builds the Docker image
+#       runner copies the image (as a .tar.gz) to our EC2 server over SSH
+#       runner SSHes into EC2 and tells it to run the new container
+#
+# Secrets used (set in: repo Settings -> Secrets and variables -> Actions):
+#   EC2_HOST     -> public DNS / IP of the EC2 instance
+#   EC2_USER     -> Linux user to SSH as (e.g. "ubuntu")
+#   EC2_SSH_KEY  -> the private SSH key (the .pem file contents)
+#
+# Note: this workflow only consumes repository secrets, never untrusted user
+# input from issues/PRs/commit messages, so there is no injection risk in the
+# `run:` blocks below.
+# ============================================================================
+
+# Human-readable name shown in the Actions tab.
+name: Build and Deploy to EC2
+
+# WHEN should this workflow run?
+on:
+  # Run on every push to the `main` branch.
+  push:
+    branches: [ main ]
+  # Also let us run it manually from the Actions tab (handy for re-runs / demos).
+  workflow_dispatch:
+
+# A workflow has one or more "jobs". Each job runs on a fresh VM.
+jobs:
+  build-and-deploy:
+    # Friendly label for the job in the UI.
+    name: Build image and deploy to EC2
+
+    # `runs-on` picks the runner. `ubuntu-latest` is a free Linux VM
+    # provided by GitHub. Docker is already installed on it.
+    runs-on: ubuntu-latest
+
+    # A job is a list of "steps" that run in order, top to bottom.
+    steps:
+
+      # ---- STEP 1: get our code onto the runner ------------------------------
+      # The runner starts empty. `actions/checkout` clones this repo so the
+      # later steps can see app.py and Dockerfile.
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ---- STEP 2: build the Docker image from our Dockerfile ---------------
+      # `docker build .` reads ./Dockerfile and produces a local image.
+      # `-t demo-app:latest` tags it so we can refer to it by name.
+      - name: Build Docker image
+        run: docker build -t demo-app:latest .
+
+      # ---- STEP 3: package the image into a single file --------------------
+      # The runner can't push directly into our EC2's local Docker, so we
+      # save the image to a tar file, gzip it, and ship the file.
+      # (Alternative: push to Docker Hub / ECR. We use a file to keep this
+      # demo registry-free and easy for students to follow.)
+      - name: Save image to a tar.gz file
+        run: docker save demo-app:latest | gzip > demo-app.tar.gz
+
+      # ---- STEP 4: copy that tar file to the EC2 server over SCP ------------
+      # `appleboy/scp-action` is a community action that wraps scp.
+      # It uses the SSH private key from our repo secret to authenticate.
+      - name: Copy image tar to EC2
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}      # where to send it
+          username: ${{ secrets.EC2_USER }}  # which Linux user
+          key: ${{ secrets.EC2_SSH_KEY }}    # private key (.pem contents)
+          source: "demo-app.tar.gz"          # file on the runner
+          target: "~/"                       # destination on EC2 ($HOME)
+
+      # ---- STEP 5: SSH in and (re)deploy the container ----------------------
+      # `appleboy/ssh-action` opens an SSH session to EC2 and runs `script`.
+      # Each line is a normal shell command running on the EC2 server.
+      - name: Deploy container on EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            # Load the new image into EC2's local Docker.
+            docker load < ~/demo-app.tar.gz
+
+            # Stop & remove any previous version of the container.
+            # `|| true` so the step doesn't fail on the very first deploy
+            # (when there's nothing to remove yet).
+            docker rm -f demo-app 2>/dev/null || true
+
+            # Start the new container in the background (-d).
+            # --restart unless-stopped = come back up after reboot/crash.
+            docker run -d --name demo-app --restart unless-stopped demo-app:latest
+
+            # Tidy up the tar file we just imported.
+            rm ~/demo-app.tar.gz
+
+            # Print proof: the new container should appear in `docker ps`.
+            docker ps | grep demo-app
