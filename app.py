@@ -18,7 +18,7 @@
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 PORT = 8080
-MESSAGE = "Hello from CI/CD! This container was built and deployed by GitHub Actions."
+MESSAGE = "Hello from CI/CD! This container was build from neoskills org"
 
 
 class Handler(BaseHTTPRequestHandler):
