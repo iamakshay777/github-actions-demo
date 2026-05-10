@@ -10,6 +10,7 @@
 #       runner builds the Docker image
 #       runner copies the image (as a .tar.gz) to our EC2 server over SSH
 #       runner SSHes into EC2 and tells it to run the new container
+#       container exposes port 8080 -> visit http://<EC2-public-ip>:8080
 #
 # Secrets used (set in: repo Settings -> Secrets and variables -> Actions):
 #   EC2_HOST     -> public DNS / IP of the EC2 instance
@@ -96,8 +97,10 @@ jobs:
             docker rm -f demo-app 2>/dev/null || true
 
             # Start the new container in the background (-d).
+            # -p 8080:8080 publishes container port 8080 on the EC2 host's
+            # port 8080, so http://<EC2-public-ip>:8080 reaches our app.
             # --restart unless-stopped = come back up after reboot/crash.
-            docker run -d --name demo-app --restart unless-stopped demo-app:latest
+            docker run -d --name demo-app --restart unless-stopped -p 8080:8080 demo-app:latest
 
             # Tidy up the tar file we just imported.
             rm ~/demo-app.tar.gz

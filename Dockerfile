@@ -16,6 +16,11 @@ WORKDIR /app
 # Left side = path on the GitHub runner. Right side = path inside the image.
 COPY app.py .
 
+# Document that the app inside the container listens on TCP 8080.
+# EXPOSE is metadata only — actual port publishing happens at
+# `docker run` time with the `-p 8080:8080` flag.
+EXPOSE 8080
+
 # The command Docker runs when the container starts.
 # -u = unbuffered output (so `docker logs` shows prints immediately).
 CMD ["python", "-u", "app.py"]
